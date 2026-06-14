@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.tmp/
+.venv/
+venv/
+
+# Native build outputs
+build/
+dist/
+wheelhouse/
+_skbuild/
+*.pyd
+*.so
+*.dll
+*.lib
+*.obj
+
+# Editors and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local scratch files
+test.py
+对话历史.txt
+新建 文本文档.txt
