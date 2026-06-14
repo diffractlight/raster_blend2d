@@ -52,7 +52,7 @@ addopts = "-q"
 build = "cp39-* cp310-* cp311-* cp312-* cp313-*"
 skip = ["*-musllinux_*", "pp*"]
 test-command = "pytest {project}/tests"
-test-requires = ["pytest"]
+test-requires = ["pytest", "numpy"]
 
 [tool.cibuildwheel.windows]
 archs = ["AMD64"]
