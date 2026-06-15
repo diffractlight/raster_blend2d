@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from numbers import Real
 
-from ._core import _rasterize_polygons_a8
+from ._core import _A8Rasterizer
 
 
 def _normalize_pixel_size_um(pixel_size_um) -> tuple[float, float]:
@@ -30,12 +30,30 @@ def _normalize_pixel_size_um(pixel_size_um) -> tuple[float, float]:
 class Blend2DPolygonRasterizer:
     """Rasterize layout polygons to float32 coverage using a Blend2D A8 mask."""
 
-    def __init__(self, pixel_size_um: float | tuple[float, float], oversampling: int = 1) -> None:
+    def __init__(
+        self,
+        pixel_size_um: float | tuple[float, float],
+        oversampling: int = 1,
+        tile_size_px: int | None = None,
+        parallel_workers: int = 1,
+    ) -> None:
         if oversampling <= 0:
             raise ValueError("oversampling must be positive")
+        if tile_size_px is not None and tile_size_px <= 0:
+            raise ValueError("tile_size_px must be positive when provided")
+        if parallel_workers <= 0:
+            raise ValueError("parallel_workers must be positive")
 
         self.pixel_size_um = _normalize_pixel_size_um(pixel_size_um)
         self.oversampling = int(oversampling)
+        self.tile_size_px = int(tile_size_px or 0)
+        self.parallel_workers = int(parallel_workers)
+        self._rasterizer = _A8Rasterizer(
+            self.pixel_size_um,
+            self.oversampling,
+            self.tile_size_px,
+            self.parallel_workers,
+        )
 
     def rasterize(self, polygons, window_size_um: tuple[float, float]):
         if len(window_size_um) != 2:
@@ -43,9 +61,42 @@ class Blend2DPolygonRasterizer:
         if window_size_um[0] <= 0 or window_size_um[1] <= 0:
             raise ValueError("window_size_um values must be positive")
 
-        return _rasterize_polygons_a8(
+        return self._rasterizer.rasterize(
             polygons,
-            self.pixel_size_um,
-            self.oversampling,
             (float(window_size_um[0]), float(window_size_um[1])),
         )
+
+    def rasterize_flat(
+        self,
+        points,
+        ring_offsets,
+        polygon_offsets,
+        window_size_um: tuple[float, float],
+    ):
+        """Rasterize flat numpy polygon buffers.
+
+        points is shaped (N, 2). ring_offsets has length R + 1 and stores point
+        ranges for each ring. polygon_offsets has length P + 1 and stores ring
+        ranges for each polygon; the first ring of each polygon is the hull and
+        following rings are holes.
+        """
+        if len(window_size_um) != 2:
+            raise ValueError("window_size_um must be a 2-tuple")
+        if window_size_um[0] <= 0 or window_size_um[1] <= 0:
+            raise ValueError("window_size_um values must be positive")
+
+        return self._rasterizer.rasterize_flat(
+            points,
+            ring_offsets,
+            polygon_offsets,
+            (float(window_size_um[0]), float(window_size_um[1])),
+        )
+
+    def clear_cache(self) -> None:
+        """Release the cached native A8 mask buffer."""
+        self._rasterizer.clear_cache()
+
+    @property
+    def cache_size(self) -> tuple[int, int]:
+        """Return cached native A8 mask size as (width, height)."""
+        return tuple(self._rasterizer.cache_size)
