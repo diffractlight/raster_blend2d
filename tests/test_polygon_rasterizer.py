@@ -2,6 +2,63 @@ import numpy as np
 import pytest
 
 
+def test_pixel_size_accepts_scalar_for_square_pixels():
+    try:
+        from raster_blend2d import Blend2DPolygonRasterizer
+    except ImportError as exc:
+        pytest.skip(f"native extension is not built in this checkout: {exc}")
+
+    rasterizer = Blend2DPolygonRasterizer(pixel_size_um=0.5, oversampling=2)
+    assert rasterizer.pixel_size_um == (0.5, 0.5)
+
+    coverage = rasterizer.rasterize(
+        polygons=[
+            {
+                "hull": [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)],
+                "holes": [],
+            }
+        ],
+        window_size_um=(1.0, 1.0),
+    )
+
+    assert coverage.shape == (2, 2)
+    assert coverage.dtype == np.float32
+
+
+def test_pixel_size_accepts_tuple_for_rectangular_pixels():
+    try:
+        from raster_blend2d import Blend2DPolygonRasterizer
+    except ImportError as exc:
+        pytest.skip(f"native extension is not built in this checkout: {exc}")
+
+    rasterizer = Blend2DPolygonRasterizer(pixel_size_um=(0.5, 1.0), oversampling=2)
+    assert rasterizer.pixel_size_um == (0.5, 1.0)
+
+    coverage = rasterizer.rasterize(
+        polygons=[
+            {
+                "hull": [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)],
+                "holes": [],
+            }
+        ],
+        window_size_um=(1.0, 1.0),
+    )
+
+    assert coverage.shape == (2, 1)
+    assert coverage.dtype == np.float32
+
+
+@pytest.mark.parametrize("pixel_size_um", [0.0, -1.0, (1.0,), (1.0, 0.0), object()])
+def test_pixel_size_rejects_invalid_values(pixel_size_um):
+    try:
+        from raster_blend2d import Blend2DPolygonRasterizer
+    except ImportError as exc:
+        pytest.skip(f"native extension is not built in this checkout: {exc}")
+
+    with pytest.raises(ValueError):
+        Blend2DPolygonRasterizer(pixel_size_um=pixel_size_um)
+
+
 def test_polygon_rasterizer_shape_dtype_and_lower_left_origin():
     try:
         from raster_blend2d import Blend2DPolygonRasterizer

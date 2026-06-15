@@ -155,7 +155,7 @@ static py::array_t<float> rasterize_polygons_a8(
   BLContext ctx(mask);
   ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
   ctx.fill_all(BLRgba32(0x00000000u));
-  ctx.set_comp_op(BL_COMP_OP_SRC_OVER);
+  ctx.set_comp_op(BL_COMP_OP_PLUS);
   ctx.set_fill_rule(BL_FILL_RULE_EVEN_ODD);
 
   for (const py::handle& polygon_obj : polygons) {
