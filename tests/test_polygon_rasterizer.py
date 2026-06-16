@@ -69,6 +69,74 @@ def test_parallel_workers_rejects_invalid_values():
         Blend2DPolygonRasterizer(pixel_size_um=1.0, parallel_workers=0)
 
 
+def test_snap_to_pixel_grid_defaults_to_enabled():
+    try:
+        from raster_blend2d import Blend2DPolygonRasterizer
+    except ImportError as exc:
+        pytest.skip(f"native extension is not built in this checkout: {exc}")
+
+    rasterizer = Blend2DPolygonRasterizer(pixel_size_um=1.0)
+    assert rasterizer.snap_to_pixel_grid is True
+    assert rasterizer.mask_format == "a8"
+
+
+def test_snap_to_pixel_grid_can_be_disabled():
+    try:
+        from raster_blend2d import Blend2DPolygonRasterizer
+    except ImportError as exc:
+        pytest.skip(f"native extension is not built in this checkout: {exc}")
+
+    y1 = 0.18 + 0.02
+    polygons = [{"hull": [(0.01, 0.02), (0.04, 0.02), (0.04, y1), (0.01, y1)], "holes": []}]
+
+    enabled = Blend2DPolygonRasterizer(
+        pixel_size_um=0.02,
+        oversampling=1,
+        snap_to_pixel_grid=True,
+    ).rasterize(polygons=polygons, window_size_um=(0.5, 0.5))
+    disabled = Blend2DPolygonRasterizer(
+        pixel_size_um=0.02,
+        oversampling=1,
+        snap_to_pixel_grid=False,
+    ).rasterize(polygons=polygons, window_size_um=(0.5, 0.5))
+
+    assert enabled[0, 9] > disabled[0, 9]
+    assert enabled[0, 9] - disabled[0, 9] == pytest.approx(1.0 / 255.0)
+
+
+def test_mask_format_accepts_prgb32():
+    try:
+        from raster_blend2d import Blend2DPolygonRasterizer
+    except ImportError as exc:
+        pytest.skip(f"native extension is not built in this checkout: {exc}")
+
+    rasterizer = Blend2DPolygonRasterizer(pixel_size_um=1.0, mask_format="prgb32")
+    coverage = rasterizer.rasterize(
+        polygons=[
+            {
+                "hull": [(1.0, 0.0), (2.0, 0.0), (2.0, 1.0), (1.0, 1.0)],
+                "holes": [],
+            }
+        ],
+        window_size_um=(3.0, 2.0),
+    )
+
+    assert rasterizer.mask_format == "prgb32"
+    assert coverage.shape == (3, 2)
+    assert coverage[1, 0] == pytest.approx(1.0)
+    assert coverage[0, 0] == pytest.approx(0.0)
+
+
+def test_mask_format_rejects_invalid_values():
+    try:
+        from raster_blend2d import Blend2DPolygonRasterizer
+    except ImportError as exc:
+        pytest.skip(f"native extension is not built in this checkout: {exc}")
+
+    with pytest.raises(ValueError):
+        Blend2DPolygonRasterizer(pixel_size_um=1.0, mask_format="rgba")
+
+
 def test_polygon_rasterizer_shape_dtype_and_lower_left_origin():
     try:
         from raster_blend2d import Blend2DPolygonRasterizer

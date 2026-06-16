@@ -117,11 +117,10 @@ static void add_ring_to_path(
     const py::handle& ring_obj,
     double pixel_size_x_um,
     double pixel_size_y_um,
-    double grid_width_um,
-    int width_px,
-    int tile_x_end_px,
+    int tile_x_start_px,
     int tile_y_start_px,
-    int oversampling) {
+    int oversampling,
+    bool snap_to_pixel_grid) {
   py::sequence ring = py::reinterpret_borrow<py::sequence>(ring_obj);
   if (ring.size() < 3) {
     return;
@@ -132,11 +131,12 @@ static void add_ring_to_path(
     double y_um = point_coord(ring[i], 1);
     double x = (y_um / pixel_size_y_um - static_cast<double>(tile_y_start_px)) *
                static_cast<double>(oversampling);
-    double y = ((grid_width_um - x_um) / pixel_size_x_um -
-                static_cast<double>(width_px - tile_x_end_px)) *
+    double y = (x_um / pixel_size_x_um - static_cast<double>(tile_x_start_px)) *
                static_cast<double>(oversampling);
-    x = snap_near_integer(x);
-    y = snap_near_integer(y);
+    if (snap_to_pixel_grid) {
+      x = snap_near_integer(x);
+      y = snap_near_integer(y);
+    }
 
     if (i == 0) {
       path.move_to(x, y);
@@ -154,11 +154,10 @@ static void add_flat_ring_to_path(
     std::int64_t point_end,
     double pixel_size_x_um,
     double pixel_size_y_um,
-    double grid_width_um,
-    int width_px,
-    int tile_x_end_px,
+    int tile_x_start_px,
     int tile_y_start_px,
-    int oversampling) {
+    int oversampling,
+    bool snap_to_pixel_grid) {
   if (point_end - point_start < 3) {
     return;
   }
@@ -168,11 +167,12 @@ static void add_flat_ring_to_path(
     double y_um = points[static_cast<std::size_t>(i) * 2u + 1u];
     double x = (y_um / pixel_size_y_um - static_cast<double>(tile_y_start_px)) *
                static_cast<double>(oversampling);
-    double y = ((grid_width_um - x_um) / pixel_size_x_um -
-                static_cast<double>(width_px - tile_x_end_px)) *
+    double y = (x_um / pixel_size_x_um - static_cast<double>(tile_x_start_px)) *
                static_cast<double>(oversampling);
-    x = snap_near_integer(x);
-    y = snap_near_integer(y);
+    if (snap_to_pixel_grid) {
+      x = snap_near_integer(x);
+      y = snap_near_integer(y);
+    }
 
     if (i == point_start) {
       path.move_to(x, y);
@@ -201,7 +201,8 @@ static void downsample_a8_mask_into(
     int tile_y_start_px,
     int tile_width_px,
     int tile_height_px,
-    int oversampling) {
+    int oversampling,
+    int mask_bytes_per_pixel) {
   const auto* pixels = static_cast<const std::uint8_t*>(data.pixel_data);
   const double scale =
       1.0 / (255.0 * static_cast<double>(oversampling) * static_cast<double>(oversampling));
@@ -209,14 +210,14 @@ static void downsample_a8_mask_into(
   if (oversampling == 1) {
     constexpr float kScale = 1.0f / 255.0f;
     for (int x = 0; x < tile_width_px; ++x) {
-      int mask_y = tile_width_px - 1 - x;
+      int mask_y = x;
       const auto* row =
           pixels + static_cast<std::size_t>(mask_y) * static_cast<std::size_t>(data.stride);
       auto* out_row = out +
           static_cast<std::size_t>(tile_x_start_px + x) * static_cast<std::size_t>(height_px) +
           static_cast<std::size_t>(tile_y_start_px);
       for (int y = 0; y < tile_height_px; ++y) {
-        out_row[y] = static_cast<float>(row[y]) * kScale;
+        out_row[y] = static_cast<float>(row[static_cast<std::size_t>(y) * mask_bytes_per_pixel]) * kScale;
       }
     }
     return;
@@ -225,7 +226,7 @@ static void downsample_a8_mask_into(
   if (oversampling == 2) {
     constexpr float kScale = 1.0f / (255.0f * 4.0f);
     for (int x = 0; x < tile_width_px; ++x) {
-      int mask_y0 = (tile_width_px - 1 - x) * 2;
+      int mask_y0 = x * 2;
       const auto* row0 =
           pixels + static_cast<std::size_t>(mask_y0) * static_cast<std::size_t>(data.stride);
       const auto* row1 =
@@ -235,10 +236,11 @@ static void downsample_a8_mask_into(
           static_cast<std::size_t>(tile_y_start_px);
       for (int y = 0; y < tile_height_px; ++y) {
         int mask_x0 = y * 2;
-        unsigned sum = static_cast<unsigned>(row0[mask_x0]) +
-                       static_cast<unsigned>(row0[mask_x0 + 1]) +
-                       static_cast<unsigned>(row1[mask_x0]) +
-                       static_cast<unsigned>(row1[mask_x0 + 1]);
+        unsigned sum =
+            static_cast<unsigned>(row0[static_cast<std::size_t>(mask_x0) * mask_bytes_per_pixel]) +
+            static_cast<unsigned>(row0[static_cast<std::size_t>(mask_x0 + 1) * mask_bytes_per_pixel]) +
+            static_cast<unsigned>(row1[static_cast<std::size_t>(mask_x0) * mask_bytes_per_pixel]) +
+            static_cast<unsigned>(row1[static_cast<std::size_t>(mask_x0 + 1) * mask_bytes_per_pixel]);
         out_row[y] = static_cast<float>(sum) * kScale;
       }
     }
@@ -248,7 +250,7 @@ static void downsample_a8_mask_into(
   if (oversampling == 4) {
     constexpr float kScale = 1.0f / (255.0f * 16.0f);
     for (int x = 0; x < tile_width_px; ++x) {
-      int mask_y0 = (tile_width_px - 1 - x) * 4;
+      int mask_y0 = x * 4;
       auto* out_row = out +
           static_cast<std::size_t>(tile_x_start_px + x) * static_cast<std::size_t>(height_px) +
           static_cast<std::size_t>(tile_y_start_px);
@@ -258,7 +260,13 @@ static void downsample_a8_mask_into(
         for (int sy = 0; sy < 4; ++sy) {
           const auto* row =
               pixels + static_cast<std::size_t>(mask_y0 + sy) * static_cast<std::size_t>(data.stride);
-          sum += sum_4_u8(row + mask_x0);
+          if (mask_bytes_per_pixel == 1) {
+            sum += sum_4_u8(row + mask_x0);
+          } else {
+            for (int sx = 0; sx < 4; ++sx) {
+              sum += row[static_cast<std::size_t>(mask_x0 + sx) * mask_bytes_per_pixel];
+            }
+          }
         }
         out_row[y] = static_cast<float>(sum) * kScale;
       }
@@ -272,14 +280,14 @@ static void downsample_a8_mask_into(
         static_cast<std::size_t>(tile_y_start_px);
     for (int y = 0; y < tile_height_px; ++y) {
       std::uint64_t sum = 0;
-      int mask_y0 = (tile_width_px - 1 - x) * oversampling;
+      int mask_y0 = x * oversampling;
       int mask_x0 = y * oversampling;
 
       for (int sy = 0; sy < oversampling; ++sy) {
         const auto* row =
             pixels + static_cast<std::size_t>(mask_y0 + sy) * static_cast<std::size_t>(data.stride);
         for (int sx = 0; sx < oversampling; ++sx) {
-          sum += row[mask_x0 + sx];
+          sum += row[static_cast<std::size_t>(mask_x0 + sx) * mask_bytes_per_pixel];
         }
       }
 
@@ -292,11 +300,12 @@ static py::array_t<float> downsample_a8_mask(
     const BLImageData& data,
     int width_px,
     int height_px,
-    int oversampling) {
+    int oversampling,
+    int mask_bytes_per_pixel) {
   py::array_t<float> coverage({width_px, height_px});
   auto* out = static_cast<float*>(coverage.mutable_data());
   downsample_a8_mask_into(
-      data, out, width_px, height_px, 0, 0, width_px, height_px, oversampling);
+      data, out, width_px, height_px, 0, 0, width_px, height_px, oversampling, mask_bytes_per_pixel);
   return coverage;
 }
 
@@ -304,7 +313,9 @@ static py::array_t<float> rasterize_polygons_a8(
     const py::sequence& polygons,
     std::array<double, 2> pixel_size_um,
     int oversampling,
-    std::array<double, 2> window_size_um) {
+    std::array<double, 2> window_size_um,
+    bool snap_to_pixel_grid,
+    bool use_prgb32_mask) {
   if (oversampling <= 0) {
     throw std::invalid_argument("oversampling must be positive");
   }
@@ -315,7 +326,6 @@ static py::array_t<float> rasterize_polygons_a8(
 
   int width_px = ceil_to_int(window_size_um[0] / pixel_size_um[0], "window width in pixels");
   int height_px = ceil_to_int(window_size_um[1] / pixel_size_um[1], "window height in pixels");
-  const double grid_width_um = static_cast<double>(width_px) * pixel_size_um[0];
 
   if (width_px > std::numeric_limits<int>::max() / oversampling ||
       height_px > std::numeric_limits<int>::max() / oversampling) {
@@ -325,7 +335,7 @@ static py::array_t<float> rasterize_polygons_a8(
   int mask_width = height_px * oversampling;
   int mask_height = width_px * oversampling;
 
-  BLImage mask(mask_width, mask_height, BL_FORMAT_A8);
+  BLImage mask(mask_width, mask_height, use_prgb32_mask ? BL_FORMAT_PRGB32 : BL_FORMAT_A8);
   BLContext ctx(mask);
   ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
   ctx.fill_all(BLRgba32(0x00000000u));
@@ -344,11 +354,10 @@ static py::array_t<float> rasterize_polygons_a8(
         polygon["hull"],
         pixel_size_um[0],
         pixel_size_um[1],
-        grid_width_um,
-        width_px,
-        width_px,
         0,
-        oversampling);
+        0,
+        oversampling,
+        snap_to_pixel_grid);
 
     if (polygon.contains("holes") && !polygon["holes"].is_none()) {
       py::sequence holes = py::reinterpret_borrow<py::sequence>(polygon["holes"]);
@@ -358,11 +367,10 @@ static py::array_t<float> rasterize_polygons_a8(
             hole,
             pixel_size_um[0],
             pixel_size_um[1],
-            grid_width_um,
-            width_px,
-            width_px,
             0,
-            oversampling);
+            0,
+            oversampling,
+            snap_to_pixel_grid);
       }
     }
 
@@ -376,7 +384,7 @@ static py::array_t<float> rasterize_polygons_a8(
     throw std::runtime_error("failed to read Blend2D A8 mask data");
   }
 
-  return downsample_a8_mask(data, width_px, height_px, oversampling);
+  return downsample_a8_mask(data, width_px, height_px, oversampling, use_prgb32_mask ? 4 : 1);
 }
 
 static py::array_t<float> rasterize_polygons_a8_flat(
@@ -385,7 +393,9 @@ static py::array_t<float> rasterize_polygons_a8_flat(
     py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> polygon_offsets,
     std::array<double, 2> pixel_size_um,
     int oversampling,
-    std::array<double, 2> window_size_um) {
+    std::array<double, 2> window_size_um,
+    bool snap_to_pixel_grid,
+    bool use_prgb32_mask) {
   if (oversampling <= 0) {
     throw std::invalid_argument("oversampling must be positive");
   }
@@ -405,7 +415,6 @@ static py::array_t<float> rasterize_polygons_a8_flat(
 
   int width_px = ceil_to_int(window_size_um[0] / pixel_size_um[0], "window width in pixels");
   int height_px = ceil_to_int(window_size_um[1] / pixel_size_um[1], "window height in pixels");
-  const double grid_width_um = static_cast<double>(width_px) * pixel_size_um[0];
 
   if (width_px > std::numeric_limits<int>::max() / oversampling ||
       height_px > std::numeric_limits<int>::max() / oversampling) {
@@ -438,7 +447,7 @@ static py::array_t<float> rasterize_polygons_a8_flat(
   int mask_width = height_px * oversampling;
   int mask_height = width_px * oversampling;
 
-  BLImage mask(mask_width, mask_height, BL_FORMAT_A8);
+  BLImage mask(mask_width, mask_height, use_prgb32_mask ? BL_FORMAT_PRGB32 : BL_FORMAT_A8);
   BLContext ctx(mask);
   ctx.set_comp_op(BL_COMP_OP_SRC_COPY);
   ctx.fill_all(BLRgba32(0x00000000u));
@@ -458,11 +467,10 @@ static py::array_t<float> rasterize_polygons_a8_flat(
           ring_data[ring_index + 1],
           pixel_size_um[0],
           pixel_size_um[1],
-          grid_width_um,
-          width_px,
-          width_px,
           0,
-          oversampling);
+          0,
+          oversampling,
+          snap_to_pixel_grid);
     }
 
     ctx.fill_path(path, BLRgba32(0xFFFFFFFFu));
@@ -475,7 +483,7 @@ static py::array_t<float> rasterize_polygons_a8_flat(
     throw std::runtime_error("failed to read Blend2D A8 mask data");
   }
 
-  return downsample_a8_mask(data, width_px, height_px, oversampling);
+  return downsample_a8_mask(data, width_px, height_px, oversampling, use_prgb32_mask ? 4 : 1);
 }
 
 class PolygonRasterizerA8 {
@@ -484,11 +492,15 @@ class PolygonRasterizerA8 {
       std::array<double, 2> pixel_size_um,
       int oversampling,
       int tile_size_px,
-      int parallel_workers)
+      int parallel_workers,
+      bool snap_to_pixel_grid,
+      bool use_prgb32_mask)
       : pixel_size_um_(pixel_size_um),
         oversampling_(oversampling),
         tile_size_px_(tile_size_px),
-        parallel_workers_(parallel_workers) {
+        parallel_workers_(parallel_workers),
+        snap_to_pixel_grid_(snap_to_pixel_grid),
+        use_prgb32_mask_(use_prgb32_mask) {
     validate_common();
   }
 
@@ -503,14 +515,23 @@ class PolygonRasterizerA8 {
     auto* out = static_cast<float*>(coverage.mutable_data());
 
     for_each_tile(width_px, height_px, [&](int tile_x, int tile_y, int tile_width, int tile_height) {
-      render_sequence_tile(polygons, width_px, height_px, tile_x, tile_y, tile_width, tile_height);
+      render_sequence_tile(polygons, tile_x, tile_y, tile_width, tile_height);
       BLImageData data;
       BLResult result = mask_.get_data(&data);
       if (result != BL_SUCCESS) {
         throw std::runtime_error("failed to read Blend2D A8 mask data");
       }
       downsample_a8_mask_into(
-          data, out, width_px, height_px, tile_x, tile_y, tile_width, tile_height, oversampling_);
+          data,
+          out,
+          width_px,
+          height_px,
+          tile_x,
+          tile_y,
+          tile_width,
+          tile_height,
+          oversampling_,
+          mask_bytes_per_pixel());
     });
 
     return coverage;
@@ -549,8 +570,6 @@ class PolygonRasterizerA8 {
             points,
             ring_offsets,
             polygon_offsets,
-            width_px,
-            height_px,
             polygon_bounds.data(),
             tile.x,
             tile.y,
@@ -562,7 +581,16 @@ class PolygonRasterizerA8 {
           throw std::runtime_error("failed to read Blend2D A8 mask data");
         }
         downsample_a8_mask_into(
-            data, out, width_px, height_px, tile.x, tile.y, tile.width, tile.height, oversampling_);
+            data,
+            out,
+            width_px,
+            height_px,
+            tile.x,
+            tile.y,
+            tile.width,
+            tile.height,
+            oversampling_,
+            mask_bytes_per_pixel());
       }
     }
 
@@ -593,6 +621,8 @@ class PolygonRasterizerA8 {
   int oversampling_ = 1;
   int tile_size_px_ = 0;
   int parallel_workers_ = 1;
+  bool snap_to_pixel_grid_ = true;
+  bool use_prgb32_mask_ = false;
   BLImage mask_;
   int mask_width_ = 0;
   int mask_height_ = 0;
@@ -725,9 +755,17 @@ class PolygonRasterizerA8 {
     return tiles;
   }
 
+  BLFormat mask_format() const {
+    return use_prgb32_mask_ ? BL_FORMAT_PRGB32 : BL_FORMAT_A8;
+  }
+
+  int mask_bytes_per_pixel() const {
+    return use_prgb32_mask_ ? 4 : 1;
+  }
+
   void ensure_mask(int width, int height) {
     if (mask_width_ < width || mask_height_ < height) {
-      mask_ = BLImage(width, height, BL_FORMAT_A8);
+      mask_ = BLImage(width, height, mask_format());
       mask_width_ = width;
       mask_height_ = height;
     }
@@ -750,9 +788,9 @@ class PolygonRasterizerA8 {
     return ctx;
   }
 
-  static void ensure_mask(BLImage& mask, int& mask_width, int& mask_height, int width, int height) {
+  void ensure_mask(BLImage& mask, int& mask_width, int& mask_height, int width, int height) {
     if (mask_width < width || mask_height < height) {
-      mask = BLImage(width, height, BL_FORMAT_A8);
+      mask = BLImage(width, height, mask_format());
       mask_width = width;
       mask_height = height;
     }
@@ -782,15 +820,11 @@ class PolygonRasterizerA8 {
 
   void render_sequence_tile(
       const py::sequence& polygons,
-      int width_px,
-      int /*height_px*/,
       int tile_x,
       int tile_y,
       int tile_width,
       int tile_height) {
     BLContext ctx = begin_draw(tile_width, tile_height);
-    const int tile_x_end = tile_x + tile_width;
-    const double grid_width_um = static_cast<double>(width_px) * pixel_size_um_[0];
 
     for (const py::handle& polygon_obj : polygons) {
       py::dict polygon = py::reinterpret_borrow<py::dict>(polygon_obj);
@@ -804,11 +838,10 @@ class PolygonRasterizerA8 {
           polygon["hull"],
           pixel_size_um_[0],
           pixel_size_um_[1],
-          grid_width_um,
-          width_px,
-          tile_x_end,
+          tile_x,
           tile_y,
-          oversampling_);
+          oversampling_,
+          snap_to_pixel_grid_);
 
       if (polygon.contains("holes") && !polygon["holes"].is_none()) {
         py::sequence holes = py::reinterpret_borrow<py::sequence>(polygon["holes"]);
@@ -818,11 +851,10 @@ class PolygonRasterizerA8 {
               hole,
               pixel_size_um_[0],
               pixel_size_um_[1],
-              grid_width_um,
-              width_px,
-              tile_x_end,
+              tile_x,
               tile_y,
-              oversampling_);
+              oversampling_,
+              snap_to_pixel_grid_);
         }
       }
 
@@ -835,8 +867,6 @@ class PolygonRasterizerA8 {
       py::array_t<double, py::array::c_style | py::array::forcecast> points,
       py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> ring_offsets,
       py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> polygon_offsets,
-      int width_px,
-      int /*height_px*/,
       const PolygonBounds* polygon_bounds,
       int tile_x,
       int tile_y,
@@ -852,8 +882,6 @@ class PolygonRasterizerA8 {
     validate_flat_offsets(point_count, ring_count, polygon_count, ring_data, polygon_data);
 
     BLContext ctx = begin_draw(tile_width, tile_height);
-    const int tile_x_end = tile_x + tile_width;
-    const double grid_width_um = static_cast<double>(width_px) * pixel_size_um_[0];
 
     for (std::int64_t polygon_index = 0; polygon_index < polygon_count; ++polygon_index) {
       if (!intersects_tile(
@@ -876,11 +904,10 @@ class PolygonRasterizerA8 {
             ring_data[ring_index + 1],
             pixel_size_um_[0],
             pixel_size_um_[1],
-            grid_width_um,
-            width_px,
-            tile_x_end,
+            tile_x,
             tile_y,
-            oversampling_);
+            oversampling_,
+            snap_to_pixel_grid_);
       }
 
       ctx.fill_path(path, BLRgba32(0xFFFFFFFFu));
@@ -896,16 +923,12 @@ class PolygonRasterizerA8 {
       const std::int64_t* ring_data,
       const std::int64_t* polygon_data,
       std::int64_t polygon_count,
-      int width_px,
-      int /*height_px*/,
       const PolygonBounds* polygon_bounds,
       int tile_x,
       int tile_y,
       int tile_width,
       int tile_height) {
     BLContext ctx = begin_draw(mask, mask_width, mask_height, tile_width, tile_height);
-    const int tile_x_end = tile_x + tile_width;
-    const double grid_width_um = static_cast<double>(width_px) * pixel_size_um_[0];
 
     for (std::int64_t polygon_index = 0; polygon_index < polygon_count; ++polygon_index) {
       if (!intersects_tile(
@@ -928,11 +951,10 @@ class PolygonRasterizerA8 {
             ring_data[ring_index + 1],
             pixel_size_um_[0],
             pixel_size_um_[1],
-            grid_width_um,
-            width_px,
-            tile_x_end,
+            tile_x,
             tile_y,
-            oversampling_);
+            oversampling_,
+            snap_to_pixel_grid_);
       }
 
       ctx.fill_path(path, BLRgba32(0xFFFFFFFFu));
@@ -990,8 +1012,6 @@ class PolygonRasterizerA8 {
                   ring_data,
                   polygon_data,
                   polygon_count,
-                  width_px,
-                  height_px,
                   polygon_bounds.data(),
                   tile.x,
                   tile.y,
@@ -1012,7 +1032,8 @@ class PolygonRasterizerA8 {
                   tile.y,
                   tile.width,
                   tile.height,
-                  oversampling_);
+                  oversampling_,
+                  mask_bytes_per_pixel());
             }
           } catch (...) {
             std::lock_guard<std::mutex> lock(error_mutex);
@@ -1071,11 +1092,13 @@ PYBIND11_MODULE(_core, m) {
 
   py::class_<PolygonRasterizerA8>(m, "_A8Rasterizer")
       .def(
-          py::init<std::array<double, 2>, int, int, int>(),
+          py::init<std::array<double, 2>, int, int, int, bool, bool>(),
           py::arg("pixel_size_um"),
           py::arg("oversampling"),
           py::arg("tile_size_px") = 0,
-          py::arg("parallel_workers") = 1)
+          py::arg("parallel_workers") = 1,
+          py::arg("snap_to_pixel_grid") = true,
+          py::arg("use_prgb32_mask") = false)
       .def(
           "rasterize",
           &PolygonRasterizerA8::rasterize,
@@ -1108,6 +1131,8 @@ PYBIND11_MODULE(_core, m) {
       py::arg("pixel_size_um"),
       py::arg("oversampling"),
       py::arg("window_size_um"),
+      py::arg("snap_to_pixel_grid") = true,
+      py::arg("use_prgb32_mask") = false,
       "Rasterize polygons through a Blend2D A8 mask and return float32 coverage[x, y].");
 
   m.def(
@@ -1119,5 +1144,7 @@ PYBIND11_MODULE(_core, m) {
       py::arg("pixel_size_um"),
       py::arg("oversampling"),
       py::arg("window_size_um"),
+      py::arg("snap_to_pixel_grid") = true,
+      py::arg("use_prgb32_mask") = false,
       "Rasterize flat numpy polygon buffers through a Blend2D A8 mask.");
 }

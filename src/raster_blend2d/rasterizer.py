@@ -7,6 +7,13 @@ from numbers import Real
 from ._core import _A8Rasterizer
 
 
+def _normalize_mask_format(mask_format: str) -> str:
+    value = str(mask_format).lower()
+    if value not in {"a8", "prgb32"}:
+        raise ValueError("mask_format must be 'a8' or 'prgb32'")
+    return value
+
+
 def _normalize_pixel_size_um(pixel_size_um) -> tuple[float, float]:
     if isinstance(pixel_size_um, Real):
         value = float(pixel_size_um)
@@ -36,6 +43,8 @@ class Blend2DPolygonRasterizer:
         oversampling: int = 1,
         tile_size_px: int | None = None,
         parallel_workers: int = 1,
+        snap_to_pixel_grid: bool = True,
+        mask_format: str = "a8",
     ) -> None:
         if oversampling <= 0:
             raise ValueError("oversampling must be positive")
@@ -48,11 +57,15 @@ class Blend2DPolygonRasterizer:
         self.oversampling = int(oversampling)
         self.tile_size_px = int(tile_size_px or 0)
         self.parallel_workers = int(parallel_workers)
+        self.snap_to_pixel_grid = bool(snap_to_pixel_grid)
+        self.mask_format = _normalize_mask_format(mask_format)
         self._rasterizer = _A8Rasterizer(
             self.pixel_size_um,
             self.oversampling,
             self.tile_size_px,
             self.parallel_workers,
+            self.snap_to_pixel_grid,
+            self.mask_format == "prgb32",
         )
 
     def rasterize(self, polygons, window_size_um: tuple[float, float]):

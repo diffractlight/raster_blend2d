@@ -41,6 +41,10 @@ rasterizer = Blend2DPolygonRasterizer(
     # tile_size_px=1024,
     # Optional: parallelize tiled flat-buffer rasterization.
     # parallel_workers=4,
+    # Optional: use "prgb32" instead of the default "a8" mask.
+    # mask_format="prgb32",
+    # Optional: disable near-integer pixel-grid snapping.
+    # snap_to_pixel_grid=False,
 )
 
 polygons = [
@@ -60,14 +64,19 @@ assert coverage.shape == (200, 100)
 assert coverage[0, 0] >= 0.0
 ```
 
-`coverage[x, y]` uses a lower-left window origin. Internally, polygons are rendered
-to a Blend2D `A8` mask at the requested oversampling rate and downsampled to
-float32 coverage. A `Blend2DPolygonRasterizer` instance caches its native A8 mask
-buffer between calls; use `rasterizer.clear_cache()` to release it. Set
-`tile_size_px` for very large windows to render smaller A8 mask tiles and reduce
+`coverage[x, y]` uses a lower-left window origin. Internally, polygons are
+rendered to a Blend2D mask at the requested oversampling rate and downsampled to
+float32 coverage. The default `mask_format="a8"` uses a single-channel mask.
+`mask_format="prgb32"` uses Blend2D's 4-channel PRGB32 path, which can be useful
+for comparing Blend2D rasterization behavior, but it uses about 4x the mask
+memory and read bandwidth. `snap_to_pixel_grid=True` snaps transformed
+near-integer mask coordinates to avoid floating-point unit-conversion artifacts
+on grid-aligned edges. A `Blend2DPolygonRasterizer` instance caches its native
+mask buffer between calls; use `rasterizer.clear_cache()` to release it. Set
+`tile_size_px` for very large windows to render smaller mask tiles and reduce
 peak memory use. `parallel_workers` parallelizes tiled `rasterize_flat()` calls;
-the Python list/dict `rasterize()` path remains serial because it accesses Python
-objects.
+the Python list/dict `rasterize()` path remains serial because it accesses
+Python objects.
 
 For large layouts, use flat numpy buffers to reduce Python object parsing:
 
