@@ -105,12 +105,19 @@ static double point_coord(const py::handle& point, int index) {
   return py::cast<double>(seq[index]);
 }
 
+static double snap_near_integer(double value) {
+  // Keep grid-aligned edges exact after floating-point unit conversion.
+  constexpr double kTolerance = 1e-9;
+  double rounded = std::round(value);
+  return std::abs(value - rounded) <= kTolerance ? rounded : value;
+}
+
 static void add_ring_to_path(
     BLPath& path,
     const py::handle& ring_obj,
     double pixel_size_x_um,
     double pixel_size_y_um,
-    double window_width_um,
+    double grid_width_um,
     int width_px,
     int tile_x_end_px,
     int tile_y_start_px,
@@ -125,9 +132,11 @@ static void add_ring_to_path(
     double y_um = point_coord(ring[i], 1);
     double x = (y_um / pixel_size_y_um - static_cast<double>(tile_y_start_px)) *
                static_cast<double>(oversampling);
-    double y = ((window_width_um - x_um) / pixel_size_x_um -
+    double y = ((grid_width_um - x_um) / pixel_size_x_um -
                 static_cast<double>(width_px - tile_x_end_px)) *
                static_cast<double>(oversampling);
+    x = snap_near_integer(x);
+    y = snap_near_integer(y);
 
     if (i == 0) {
       path.move_to(x, y);
@@ -145,7 +154,7 @@ static void add_flat_ring_to_path(
     std::int64_t point_end,
     double pixel_size_x_um,
     double pixel_size_y_um,
-    double window_width_um,
+    double grid_width_um,
     int width_px,
     int tile_x_end_px,
     int tile_y_start_px,
@@ -159,9 +168,11 @@ static void add_flat_ring_to_path(
     double y_um = points[static_cast<std::size_t>(i) * 2u + 1u];
     double x = (y_um / pixel_size_y_um - static_cast<double>(tile_y_start_px)) *
                static_cast<double>(oversampling);
-    double y = ((window_width_um - x_um) / pixel_size_x_um -
+    double y = ((grid_width_um - x_um) / pixel_size_x_um -
                 static_cast<double>(width_px - tile_x_end_px)) *
                static_cast<double>(oversampling);
+    x = snap_near_integer(x);
+    y = snap_near_integer(y);
 
     if (i == point_start) {
       path.move_to(x, y);
@@ -304,6 +315,7 @@ static py::array_t<float> rasterize_polygons_a8(
 
   int width_px = ceil_to_int(window_size_um[0] / pixel_size_um[0], "window width in pixels");
   int height_px = ceil_to_int(window_size_um[1] / pixel_size_um[1], "window height in pixels");
+  const double grid_width_um = static_cast<double>(width_px) * pixel_size_um[0];
 
   if (width_px > std::numeric_limits<int>::max() / oversampling ||
       height_px > std::numeric_limits<int>::max() / oversampling) {
@@ -332,7 +344,7 @@ static py::array_t<float> rasterize_polygons_a8(
         polygon["hull"],
         pixel_size_um[0],
         pixel_size_um[1],
-        window_size_um[0],
+        grid_width_um,
         width_px,
         width_px,
         0,
@@ -346,7 +358,7 @@ static py::array_t<float> rasterize_polygons_a8(
             hole,
             pixel_size_um[0],
             pixel_size_um[1],
-            window_size_um[0],
+            grid_width_um,
             width_px,
             width_px,
             0,
@@ -393,6 +405,7 @@ static py::array_t<float> rasterize_polygons_a8_flat(
 
   int width_px = ceil_to_int(window_size_um[0] / pixel_size_um[0], "window width in pixels");
   int height_px = ceil_to_int(window_size_um[1] / pixel_size_um[1], "window height in pixels");
+  const double grid_width_um = static_cast<double>(width_px) * pixel_size_um[0];
 
   if (width_px > std::numeric_limits<int>::max() / oversampling ||
       height_px > std::numeric_limits<int>::max() / oversampling) {
@@ -445,7 +458,7 @@ static py::array_t<float> rasterize_polygons_a8_flat(
           ring_data[ring_index + 1],
           pixel_size_um[0],
           pixel_size_um[1],
-          window_size_um[0],
+          grid_width_um,
           width_px,
           width_px,
           0,
@@ -490,7 +503,7 @@ class PolygonRasterizerA8 {
     auto* out = static_cast<float*>(coverage.mutable_data());
 
     for_each_tile(width_px, height_px, [&](int tile_x, int tile_y, int tile_width, int tile_height) {
-      render_sequence_tile(polygons, window_size_um, width_px, height_px, tile_x, tile_y, tile_width, tile_height);
+      render_sequence_tile(polygons, width_px, height_px, tile_x, tile_y, tile_width, tile_height);
       BLImageData data;
       BLResult result = mask_.get_data(&data);
       if (result != BL_SUCCESS) {
@@ -525,7 +538,6 @@ class PolygonRasterizerA8 {
           points,
           ring_offsets,
           polygon_offsets,
-          window_size_um,
           width_px,
           height_px,
           polygon_bounds,
@@ -537,7 +549,6 @@ class PolygonRasterizerA8 {
             points,
             ring_offsets,
             polygon_offsets,
-            window_size_um,
             width_px,
             height_px,
             polygon_bounds.data(),
@@ -771,7 +782,6 @@ class PolygonRasterizerA8 {
 
   void render_sequence_tile(
       const py::sequence& polygons,
-      std::array<double, 2> window_size_um,
       int width_px,
       int /*height_px*/,
       int tile_x,
@@ -780,6 +790,7 @@ class PolygonRasterizerA8 {
       int tile_height) {
     BLContext ctx = begin_draw(tile_width, tile_height);
     const int tile_x_end = tile_x + tile_width;
+    const double grid_width_um = static_cast<double>(width_px) * pixel_size_um_[0];
 
     for (const py::handle& polygon_obj : polygons) {
       py::dict polygon = py::reinterpret_borrow<py::dict>(polygon_obj);
@@ -793,7 +804,7 @@ class PolygonRasterizerA8 {
           polygon["hull"],
           pixel_size_um_[0],
           pixel_size_um_[1],
-          window_size_um[0],
+          grid_width_um,
           width_px,
           tile_x_end,
           tile_y,
@@ -807,7 +818,7 @@ class PolygonRasterizerA8 {
               hole,
               pixel_size_um_[0],
               pixel_size_um_[1],
-              window_size_um[0],
+              grid_width_um,
               width_px,
               tile_x_end,
               tile_y,
@@ -824,7 +835,6 @@ class PolygonRasterizerA8 {
       py::array_t<double, py::array::c_style | py::array::forcecast> points,
       py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> ring_offsets,
       py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> polygon_offsets,
-      std::array<double, 2> window_size_um,
       int width_px,
       int /*height_px*/,
       const PolygonBounds* polygon_bounds,
@@ -843,6 +853,7 @@ class PolygonRasterizerA8 {
 
     BLContext ctx = begin_draw(tile_width, tile_height);
     const int tile_x_end = tile_x + tile_width;
+    const double grid_width_um = static_cast<double>(width_px) * pixel_size_um_[0];
 
     for (std::int64_t polygon_index = 0; polygon_index < polygon_count; ++polygon_index) {
       if (!intersects_tile(
@@ -865,7 +876,7 @@ class PolygonRasterizerA8 {
             ring_data[ring_index + 1],
             pixel_size_um_[0],
             pixel_size_um_[1],
-            window_size_um[0],
+            grid_width_um,
             width_px,
             tile_x_end,
             tile_y,
@@ -885,7 +896,6 @@ class PolygonRasterizerA8 {
       const std::int64_t* ring_data,
       const std::int64_t* polygon_data,
       std::int64_t polygon_count,
-      std::array<double, 2> window_size_um,
       int width_px,
       int /*height_px*/,
       const PolygonBounds* polygon_bounds,
@@ -895,6 +905,7 @@ class PolygonRasterizerA8 {
       int tile_height) {
     BLContext ctx = begin_draw(mask, mask_width, mask_height, tile_width, tile_height);
     const int tile_x_end = tile_x + tile_width;
+    const double grid_width_um = static_cast<double>(width_px) * pixel_size_um_[0];
 
     for (std::int64_t polygon_index = 0; polygon_index < polygon_count; ++polygon_index) {
       if (!intersects_tile(
@@ -917,7 +928,7 @@ class PolygonRasterizerA8 {
             ring_data[ring_index + 1],
             pixel_size_um_[0],
             pixel_size_um_[1],
-            window_size_um[0],
+            grid_width_um,
             width_px,
             tile_x_end,
             tile_y,
@@ -933,7 +944,6 @@ class PolygonRasterizerA8 {
       py::array_t<double, py::array::c_style | py::array::forcecast> points,
       py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> ring_offsets,
       py::array_t<std::int64_t, py::array::c_style | py::array::forcecast> polygon_offsets,
-      std::array<double, 2> window_size_um,
       int width_px,
       int height_px,
       const std::vector<PolygonBounds>& polygon_bounds,
@@ -980,7 +990,6 @@ class PolygonRasterizerA8 {
                   ring_data,
                   polygon_data,
                   polygon_count,
-                  window_size_um,
                   width_px,
                   height_px,
                   polygon_bounds.data(),
